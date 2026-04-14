@@ -4,23 +4,27 @@ from firebase_admin import credentials, db as rtdb
 from datetime import datetime
 import uuid
 import hashlib
-import os
 
-# Configuration de la page
+# Configuration
 st.set_page_config(page_title="ShopZone", page_icon="🛍️", layout="wide")
 
-# ─── FIREBASE INITIALISATION ────────────────
+# ─── FIREBASE INITIALISATION (CORRIGÉE) ──────
 @st.cache_resource
 def init_firebase():
     try:
         if not firebase_admin._apps:
             if "firebase" in st.secrets:
-                creds_dict = dict(st.secrets["firebase"])
-                # Correction cruciale pour l'erreur PEM (InvalidByte)
-                if "private_key" in creds_dict:
-                    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-                cred = credentials.Certificate(creds_dict)
+                # On récupère les secrets
+                creds = dict(st.secrets["firebase"])
+                
+                # RÉPARATION DE LA CLÉ PRIVÉE (Crucial pour l'erreur PEM)
+                if "private_key" in creds:
+                    # On remplace les \n textuels par de vrais sauts de ligne
+                    creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+                
+                cred = credentials.Certificate(creds)
             else:
+                # Local
                 cred = credentials.Certificate("firebase_credentials.json")
             
             firebase_admin.initialize_app(cred, {
@@ -32,112 +36,89 @@ def init_firebase():
 
 database, firebase_ok, firebase_error = init_firebase()
 
-# ─── FONCTIONS DE BASE DE DONNÉES ───────────
+# ─── FONCTIONS CRUD ──────────────────────────
 def rtdb_get(path):
-    try:
-        return rtdb.reference(path).get()
+    try: return rtdb.reference(path).get()
     except: return None
 
 def rtdb_set(path, data):
-    try:
-        rtdb.reference(path).set(data); return True
+    try: rtdb.reference(path).set(data); return True
     except: return False
 
 def rtdb_delete(path):
-    try:
-        rtdb.reference(path).delete(); return True
+    try: rtdb.reference(path).delete(); return True
     except: return False
 
 def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
-# ─── LOGIQUE AUTH ET PRODUITS ───────────────
-def login_user(username, password):
-    data = rtdb_get(f"users/{username}")
-    if data and data.get("password") == hash_pw(password):
-        return True, data["role"], data["name"]
-    return False, None, None
-
-def get_products():
-    data = rtdb_get("products")
-    return list(data.values()) if data else []
-
-def add_product(product):
-    pid = str(uuid.uuid4())[:8]
-    product["id"] = pid
-    return rtdb_set(f"products/{pid}", product)
-
-# ─── INTERFACE UTILISATEUR (UI) ─────────────
+# ─── LOGIQUE APP ─────────────────────────────
 if not firebase_ok:
-    st.error(f"❌ Erreur Firebase : {firebase_error}")
+    st.error(f"Erreur connexion : {firebase_error}")
     st.stop()
 
 if "logged" not in st.session_state:
     st.session_state.logged = False
 
-# PAGE DE CONNEXION
+# --- LOGIN ---
 if not st.session_state.logged:
-    _, mid, _ = st.columns([1, 1.5, 1])
-    with mid:
-        st.title("🛍️ ShopZone Login")
+    _, col, _ = st.columns([1, 1.5, 1])
+    with col:
+        st.title("🛍️ Connexion")
         u = st.text_input("Username")
         p = st.text_input("Password", type="password")
-        if st.button("Connexion", use_container_width=True):
-            ok, role, name = login_user(u, p)
-            if ok:
-                st.session_state.update({"logged": True, "user": u, "role": role, "name": name})
+        if st.button("Entrer", use_container_width=True):
+            data = rtdb_get(f"users/{u}")
+            if data and data.get("password") == hash_pw(p):
+                st.session_state.update({"logged": True, "user": u, "role": data["role"], "name": data["name"]})
                 st.rerun()
-            else:
-                st.error("Identifiants invalides")
+            else: st.error("Échec connexion")
     st.stop()
 
-# BARRE LATÉRALE
+# --- SIDEBAR ---
 with st.sidebar:
-    st.title(f"Salut {st.session_state.name}")
+    st.write(f"Utilisateur : {st.session_state.name}")
     menu = ["Boutique"]
-    if st.session_state.role == "admin":
-        menu += ["Ajouter Produit", "Admin Panel"]
-    page = st.radio("Menu", menu)
-    if st.button("Déconnexion"):
+    if st.session_state.role == "admin": menu += ["Ajouter Produit", "Admin"]
+    choice = st.radio("Menu", menu)
+    if st.button("Logout"):
         st.session_state.logged = False
         st.rerun()
 
-# PAGE BOUTIQUE
-if page == "Boutique":
-    st.header("Nos Produits")
-    prods = get_products()
-    if prods:
+# --- PAGES ---
+if choice == "Boutique":
+    st.header("Catalogue")
+    data = rtdb_get("products")
+    if data:
+        items = list(data.values())
         cols = st.columns(3)
-        for i, p in enumerate(prods):
+        for i, itm in enumerate(items):
             with cols[i % 3]:
-                st.subheader(p['name'])
-                if p.get('image'): st.image(p['image'])
-                st.write(f"Prix : {p['price']} DT")
-                st.write(f"Poids : {p.get('weight', 'N/D')}")
-    else:
-        st.info("Aucun produit en stock.")
+                if itm.get('image'): st.image(itm['image'])
+                st.subheader(itm['name'])
+                st.write(f"Poids: {itm.get('weight', 'N/D')} | Prix: {itm['price']} DT")
+    else: st.info("Vide")
 
-# PAGE AJOUT PRODUIT
-elif page == "Ajouter Produit":
-    st.header("Ajouter un nouvel article")
-    n = st.text_input("Nom du produit")
-    pr = st.number_input("Prix (DT)", min_value=0.0)
-    w = st.text_input("Poids (ex: 500g)")
-    img = st.text_input("Lien image")
-    if st.button("Valider l'ajout"):
+elif choice == "Ajouter Produit":
+    st.header("Nouvel Article")
+    n = st.text_input("Nom")
+    w = st.text_input("Poids (ex: 100g)")
+    p = st.number_input("Prix", min_value=0.0)
+    img = st.text_input("URL Image")
+    if st.button("Ajouter"):
         if n and w:
-            add_product({"name": n, "price": pr, "weight": w, "image": img, "created_at": str(datetime.now())})
-            st.success("Produit ajouté !")
-        else:
-            st.warning("Remplis le nom et le poids !")
+            pid = str(uuid.uuid4())[:8]
+            rtdb_set(f"products/{pid}", {"id": pid, "name": n, "weight": w, "price": p, "image": img})
+            st.success("Ajouté !")
+        else: st.warning("Nom et Poids obligatoires")
 
-# PAGE ADMIN
-elif page == "Admin Panel":
-    st.header("Gestion du catalogue")
-    prods = get_products()
-    for p in prods:
-        c1, c2 = st.columns([4, 1])
-        c1.write(f"{p['name']} - {p['price']} DT")
-        if c2.button("Supprimer", key=p['id']):
-            rtdb_delete(f"products/{p['id']}")
-            st.rerun()
+elif choice == "Admin":
+    st.header("Gestion")
+    data = rtdb_get("products")
+    if data:
+        for k, v in data.items():
+            c1, c2 = st.columns([4, 1])
+            c1.write(f"{v['name']} - {v.get('weight')}")
+            if c2.button("Supprimer", key=k):
+                rtdb_delete(f"products/{k}")
+                st.rerun()
