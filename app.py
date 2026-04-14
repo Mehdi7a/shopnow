@@ -224,20 +224,22 @@ h2, h3 {
 def init_firebase():
     try:
         if not firebase_admin._apps:
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            paths = [os.path.join(script_dir, "firebase_credentials.json"), "firebase_credentials.json"]
-            cred_path = next((p for p in paths if os.path.exists(p)), None)
-            if not cred_path:
-                return None, False, "Credentials file not found."
-            cred = credentials.Certificate(cred_path)
+            # Si on est sur Streamlit Cloud
+            if "firebase" in st.secrets:
+                creds_dict = dict(st.secrets["firebase"])
+                # Correction pour les sauts de ligne de la clé privée
+                creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+                cred = credentials.Certificate(creds_dict)
+            # Si on est en local sur ton PC
+            else:
+                cred = credentials.Certificate("firebase_credentials.json")
+            
             firebase_admin.initialize_app(cred, {
                 "databaseURL": "https://shopnow-ba63f-default-rtdb.europe-west1.firebasedatabase.app"
             })
         return rtdb, True, None
     except Exception as e:
         return None, False, str(e)
-
-database, firebase_ok, firebase_error = init_firebase()
 
 def rtdb_get(path):
     try:
