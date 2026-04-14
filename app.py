@@ -224,24 +224,20 @@ h2, h3 {
 def init_firebase():
     try:
         if not firebase_admin._apps:
-            # 1. Essayer de charger via les secrets Streamlit (pour GitHub/Déploiement)
-            if "firebase" in st.secrets:
-                creds_dict = dict(st.secrets["firebase"])
-                cred = credentials.Certificate(creds_dict)
-            # 2. Sinon, essayer de charger le fichier local (pour ton PC)
-            else:
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                cred_path = os.path.join(script_dir, "firebase_credentials.json")
-                if not os.path.exists(cred_path):
-                    return None, False, "Credentials non trouvés (local ou secret)."
-                cred = credentials.Certificate(cred_path)
-            
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            paths = [os.path.join(script_dir, "firebase_credentials.json"), "firebase_credentials.json"]
+            cred_path = next((p for p in paths if os.path.exists(p)), None)
+            if not cred_path:
+                return None, False, "Credentials file not found."
+            cred = credentials.Certificate(cred_path)
             firebase_admin.initialize_app(cred, {
-                "databaseURL": "TON_URL_FIREBASE_ICI"
+                "databaseURL": "https://shopnow-ba63f-default-rtdb.europe-west1.firebasedatabase.app"
             })
         return rtdb, True, None
     except Exception as e:
         return None, False, str(e)
+
+database, firebase_ok, firebase_error = init_firebase()
 
 def rtdb_get(path):
     try:
